@@ -30,25 +30,54 @@ async function submit() {
     return;
   }
 
-  isSubmitting.value = true;
-
-  const { error: databaseError } = await supabase.from("applications").insert({
-    full_name: fullName.value.trim(),
-    email: email.value.trim(),
-    job_title: job.value?.title || "Unknown position",
-    cover_letter: coverLetter.value.trim() || null,
-    resume_url: null,
-  });
-
-  if (databaseError) {
-    console.error(databaseError);
-    error.value = "Failed to submit application. Please try again.";
-    isSubmitting.value = false;
+  if (resume.value.size > 5 * 1024 * 1024) {
+    error.value = "Resume must be smaller than 5 MB.";
     return;
   }
 
-  submitted.value = true;
-  isSubmitting.value = false;
+  isSubmitting.value = true;
+
+  try {
+    // 1. Create a unique file name
+    const fileName = `${Date.now()}-${resume.value.name}`;
+
+    // 2. Upload resume to Supabase Storage
+    const { error: uploadError } = await supabase.storage
+      .from("resumes")
+      .upload(fileName, resume.value, {
+        cacheControl: "3600",
+        upsert: false,
+      });
+
+    if (uploadError) {
+      console.error(uploadError);
+      throw new Error("Resume upload failed.");
+    }
+
+    // 3. Save applicant data and resume path to database
+    const { error: databaseError } = await supabase
+      .from("applications")
+      .insert({
+        full_name: fullName.value.trim(),
+        email: email.value.trim(),
+        job_title: job.value?.title || "Unknown position",
+        cover_letter: coverLetter.value.trim() || null,
+        resume_url: fileName,
+      });
+
+    if (databaseError) {
+      console.error(databaseError);
+      throw new Error("Application submission failed.");
+    }
+
+    // 4. Show success message
+    submitted.value = true;
+  } catch (submitError) {
+    console.error(submitError);
+    error.value = submitError.message || "Something went wrong.";
+  } finally {
+    isSubmitting.value = false;
+  }
 }
 </script>
 <template>
